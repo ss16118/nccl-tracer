@@ -54,7 +54,7 @@ int main(int argc, char* argv[]) {
   int *DeviceList = (int *) malloc (nGPUs     * sizeof(int));
   int *data       = (int*)  malloc (data_size * sizeof(int));
   int **d_data    = (int**) malloc (nGPUs     * sizeof(int*));
-  
+
   for(int i = 0; i < nGPUs; i++)
       DeviceList[i] = i;
   
@@ -66,7 +66,7 @@ int main(int argc, char* argv[]) {
   /*Population the data vector*/
   for(int i = 0; i < data_size; i++)
       data[i] = rand()%(10-2)*2;
- 
+  
   print_vector(data, data_size);
       
   for(int g = 0; g < nGPUs; g++) {
@@ -82,9 +82,9 @@ int main(int argc, char* argv[]) {
  
   		for(int g = 0; g < nGPUs; g++) {
   	  	    cudaSetDevice(DeviceList[g]);
-		    // printf("[DEBUG] NCCL Bcast start\n");
+		    printf("[DEBUG] NCCL Bcast start\n");
     	  	    ncclBcast(d_data[g], data_size, ncclInt, 0, comms[g], s[g]); /*Broadcasting it to all*/
-	    	    // printf("[DEBUG] NCCL Bcast finished\n");
+	    	    printf("[DEBUG] NCCL Bcast finished\n");
   		}
 
   ncclGroupEnd();

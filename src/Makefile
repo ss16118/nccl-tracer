@@ -1,6 +1,6 @@
 CC=mpicc
-C_SRC=nccl-tracer.c
-CFLAGS=-I${NCCL_INSTALL}/include -I/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d/include -O2
+C_SRC=nccl_wrapper.c
+CFLAGS=-I${NCCL_INSTALL}/include -I/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d/include -O2 -g
 LDFLAGS=-L${NCCL_INSTALL}/lib -L/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d/lib64
 LIBS=-lcuda -lcudart -lnccl
 
