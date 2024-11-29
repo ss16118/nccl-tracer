@@ -1,7 +1,9 @@
-CC=mpicc
+CC=gcc
 C_SRC=nccl_wrapper.c
-CFLAGS=-I${NCCL_INSTALL}/include -I/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d/include -O2 -g
-LDFLAGS=-L${NCCL_INSTALL}/lib -L/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d/lib64
+NCCL_INSTALL=/scratch/sshen/miniconda3/pkgs/nccl-2.23.4.1-h2b5d15b_3
+CUDA_INSTALL=/apps/ault/spack/opt/spack/linux-centos8-zen2/gcc-10.2.0/cuda-11.4.0-udyaakpt7oztg7gnj764dhkhdf5ory5d
+CFLAGS=-I${NCCL_INSTALL}/include -I${CUDA_INSTALL}/include -O2 -g
+LDFLAGS=-L${NCCL_INSTALL}/lib -L${CUDA_INSTALL}/lib64 -L${CUDA_INSTALL}/targets/x86_64-linux/lib/stubs
 LIBS=-lcuda -lcudart -lnccl
 
 tracer: nccl-tracer.o

@@ -19,12 +19,31 @@ type_to_format = {
     "size_t": "%zu",
     "ncclDataType_t": "%d",
     "ncclScalarResidence_t": "%p",
-    "ncclComm_t": "%p",
-    "cudaStream_t": "%p",
-    "ncclUniqueId": "%p",
+    "ncclComm_t": "%lx",
+    "cudaStream_t": "%lx",
+    "ncclUniqueId": "%lx",
     "ncclRedOp_t": "%d",
 }
 
+# A list of functions that can be used to create new communicators
+# and the name of the variable that stores the new communicator.
+# Note that these functions are only used in the case when
+# one process is spawned for each GPU.
+new_comm_funcs = dict(
+    ncclCommInitRank="comm",
+    ncclCommSplit="newcomm",
+    ncclCommInitRankConfig="comm"
+)
+
+init_funcs = frozenset([
+    "ncclCommInitRank",
+    "ncclCommInitRankConfig"
+])
+
+comm_log_func_exclude = frozenset([
+    "ncclCommGetAsyncError",
+    "ncclCommDestroy"
+])
 
 
 class NcclProfCodegen:
@@ -59,15 +78,46 @@ class NcclProfCodegen:
             # Splits the arguments by comma
             arguments = arguments.split(",")
             # Writes the function body
+            # output_file.write(f"  printf(\"[NCCL TRACE] {operation_name} called\\n\");\n")
             output_file.write("  ncclResult_t nccl_result;\n")
             output_file.write("  double start_time = get_time();\n")
             pnccl_arg_names = ", ".join([(args.split(" ")[-1]).lstrip("*") for args in arguments])
             output_file.write(f"  nccl_result = p{operation_name}({pnccl_arg_names});\n")
             output_file.write("  double end_time = get_time();\n")
-
-            # Traces the function
-            output_file.write(f'  WRITE_TRACE("{operation_name}:')
             
+            if operation_name not in init_funcs:
+                output_file.write("  if (initialized == 0)\n")
+                output_file.write("      return nccl_result;\n")
+
+            new_comm_created = False
+            if operation_name in new_comm_funcs:
+                new_comm_created = True
+                # If the function creates a new communicator
+                comm_var = new_comm_funcs[operation_name]
+                if operation_name == "ncclCommInitRankConfig":
+                    output_file.write(f"  wait_for_init(*{comm_var});\n")
+                output_file.write("  int new_rank;\n")
+                output_file.write("  if (nccl_result == ncclSuccess)\n")
+                output_file.write("  {\n")
+                output_file.write(f"    nccl_result = pncclCommUserRank(*{comm_var}, &new_rank);\n")
+                output_file.write("    if (nccl_result != ncclSuccess) {\n")
+                output_file.write("      printf(\"Error in ncclCommUserRank\\n\");\n")
+                output_file.write("      return nccl_result;\n")
+                output_file.write("    }\n")
+                output_file.write("  }\n")
+
+                if operation_name in init_funcs:
+                    output_file.write("  if (proc_rank == -1)\n")
+                    output_file.write("  {\n")
+                    output_file.write("    proc_rank = new_rank;\n")
+                    output_file.write("    initial_comm = *comm;\n")
+                    output_file.write("    printf(\"[NCCL DEBUG] Rank %d is the initial rank with comm %lx\\n\", proc_rank, initial_comm);\n")
+                    output_file.write("  }\n")
+
+                    output_file.write("  init_tracer();\n")
+
+            # Traces the function call with the arguments, and writes
+            # them to the output file
             format_args = [("%f", "start_time")]
             for arg in arguments:
                 arg_tokens = arg.split()
@@ -88,25 +138,66 @@ class NcclProfCodegen:
 
                 # FIXME Redundant code, but I think it's clearer this way
                 if is_double_ptr:
-                    format_args.append(("%lx", f"(uintptr_t) *{arg_name}"))
+                    format_args.append(("%lx", f"*{arg_name}"))
                     continue
                 
                 if is_ptr:
-                    format_args.append(("%lx", f"(uintptr_t) {arg_name}"))
+                    if arg_type.startswith("ncclComm_t"):
+                        format_args.append(("%u", f"*{arg_name}"))
+                    elif arg_type.startswith("ncclUniqueId"):
+                        output_file.write("  char unique_id_str[9];\n")
+                        output_file.write(f"  unique_id_to_string(*{arg_name}, unique_id_str);\n")
+                        format_args.append(("%s", "unique_id_str"))
+                    elif arg_type.startswith("ncclResult_t"):
+                        format_args.append(("%u", f"*asyncError"))
+                    else:
+                        format_args.append(("%lx", f"(uintptr_t) {arg_name}"))
                     continue
-                    
+                
+                if arg_type == "ncclUniqueId":
+                    output_file.write("  char unique_id_str[9];\n")
+                    output_file.write(f"  unique_id_to_string({arg_name}, unique_id_str);\n")
+                    format_args.append(("%s", "unique_id_str"))
+                    continue
+
+                if arg_type == "ncclComm_t" and operation_name not in comm_log_func_exclude:
+                    # If the argument is a communicator, gather information
+                    # about the communicator, such as the size and the rank
+                    # of the process.
+                    output_file.write("  int comm_rank, comm_size;\n")
+                    output_file.write(f"  nccl_result = pncclCommUserRank({arg_name}, &comm_rank);\n")
+                    output_file.write("  assert(nccl_result == ncclSuccess);\n")
+                    output_file.write(f"  nccl_result = pncclCommCount({arg_name}, &comm_size);\n")
+                    output_file.write("  assert(nccl_result == ncclSuccess);\n")
+
+                    format_args.append(("%lu,%d,%d", f"{arg_name}, comm_size, comm_rank"))
+                    continue
+
+
+
                 format_str = type_to_format.get(arg_type)
                 if format_str is None:
                     raise ValueError(f"Unknown type {arg_type}")
                 if format_str == "%p":
-                    format_args.append(("%lx", f"&{arg_name}"))
+                    format_args.append(("%lx", f"(uintptr_t) &{arg_name}"))
+                elif format_str == "%lx":
+                    format_args.append(("%u", f"{arg_name}"))
                 else:
                     format_args.append((format_str, arg_name))
-                
+            
+            if new_comm_created:
+                format_args.append(("%u", "new_rank"))
+            
             format_args.append(("%f", "end_time"))
-
             format_strs, arg_names = zip(*format_args)
+            
+            output_file.write(f'  WRITE_TRACE("{operation_name}:')
             output_file.write(":".join(format_strs) + '\\n", ' + ", ".join(arg_names) + ");\n")
+
+            # if operation_name == "ncclCommDestroy":
+            #     output_file.write("  if (comm == initial_comm)\n")
+            #     output_file.write("    write_to_file();\n")
+
             output_file.write("  return nccl_result;\n")
             output_file.write("}")
 
@@ -143,6 +234,8 @@ class NcclProfCodegen:
         output_file.close()
         if verbose:
             print(f"[INFO] Wrapper code written to {self.output_path}.")
+
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
